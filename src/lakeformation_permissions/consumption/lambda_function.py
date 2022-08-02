@@ -44,7 +44,10 @@ def check_db_exist(glue_client, database):
         return False
     except Exception as e: 
         ErrorMessage = str(e)
-        logger.info("Exception occured while checking for DB existance - {}".format(ErrorMessage))            
+        logger.info(
+            f"Exception occured while checking for DB existance - {ErrorMessage}"
+        )
+
         raise e
 
 def grant_db_describe(principal, database):
@@ -56,22 +59,21 @@ def grant_db_describe(principal, database):
     
     Returns:
           response {dict} -- response from Lakeformation API call
-    """    
+    """
 
     consumption_acct = acc_id
     Name = database
-    permissions = ['DESCRIBE'] 
-    database_json = {}
+    permissions = ['DESCRIBE']
     if 'foundation_' not in database:
-            database='foundation_'+database
-    
+        database = f'foundation_{database}'
+
     glue_client = boto3.client('glue')
     db_exist = check_db_exist(glue_client,database)
 
     if not db_exist:
         # Resource link creation on Consumption account
         foundations_catalog = f_acc_id
-        logger.info("{} database doesn't exist, creating Resource Link(DB)".format(database))
+        logger.info(f"{database} database doesn't exist, creating Resource Link(DB)")
         response = glue_client.create_database(
                             DatabaseInput= {
                                 'Name': database,  
@@ -82,20 +84,25 @@ def grant_db_describe(principal, database):
                             }
                             )
         if response['ResponseMetadata']['HTTPStatusCode'] == 200:
-            logger.info('Successfully create Resource Link --> {}'.format(database.split('foundation_')[1]))
-            
+            logger.info(
+                f"Successfully create Resource Link --> {database.split('foundation_')[1]}"
+            )
+
+
     Database = {
         'CatalogId': consumption_acct,
         'Name': database
     }
-    database_json['Database'] = Database
+    database_json = {'Database': Database}
     client = boto3.client('lakeformation', config=Config(connect_timeout=5, read_timeout=60, retries={'max_attempts': 20}))
-    logger.info('Granting DB Describe on resource {} for Principal {} with Consumption ACC ID {}'
-                          .format(principal, database, consumption_acct ))
+    logger.info(
+        f'Granting DB Describe on resource {principal} for Principal {database} with Consumption ACC ID {consumption_acct}'
+    )
+
     response= client.grant_permissions(Principal=principal,
                             Resource=database_json,
                             Permissions=permissions)
-    logger.info('DB DESCRIBE Grant Response {}'.format(response))
+    logger.info(f'DB DESCRIBE Grant Response {response}')
     return response 
 
 def buildjson(event):
@@ -152,7 +159,7 @@ def buildjson(event):
         principal_json['DataLakePrincipalIdentifier'] = event['Principal']
     else:
         raise LFAttributeError
-    
+
     if 'Table' in event:
         if 'DatabaseName' not in event['Table']:
             raise LFAttributeError
@@ -189,7 +196,7 @@ def buildjson(event):
             raise LFAttributeError
     else:
         raise LFAttributeError
-    
+
     if 'Permissions' in event:
         perm_lit = ["SELECT"]
         if list(set(perm_lit) - set(event['Permissions'])):
@@ -199,8 +206,8 @@ def buildjson(event):
             perm_json['Permissions'] = event['Permissions']
     else:
         LFAttributeError
-    
-    
+
+
     return principal_json, table_json, tableWithColumns_json, perm_json
 
 
@@ -229,10 +236,10 @@ def grant_lf_permissions(principal_json, table_json, tableWithColumns_json, perm
         response= client.grant_permissions(Principal=principal_json,
                                 Resource=resource,
                                 Permissions=perm_json['Permissions'])
-        logger.info('Grant permissions API response: {}'.format(response))
+        logger.info(f'Grant permissions API response: {response}')
         return response
     except Exception as e:
-        logger.info("Grant permissions Method failed with exception {}".format(e))    
+        logger.info(f"Grant permissions Method failed with exception {e}")
         raise e
 
 def revoke_lf_permissions(principal_json, table_json, tableWithColumns_json, perm_json):
@@ -261,28 +268,36 @@ def revoke_lf_permissions(principal_json, table_json, tableWithColumns_json, per
         response= client.revoke_permissions(Principal=principal_json,
                                 Resource=resource,
                                 Permissions=perm_json['Permissions'])
-        logger.info('Revoke permissions API response: {}'.format(response))
+        logger.info(f'Revoke permissions API response: {response}')
         return response
     except Exception as e:
-        logger.info("Revoke permissions Method failed with exception {}".format(e))    
+        logger.info(f"Revoke permissions Method failed with exception {e}")
         raise e
 
 def lambda_handler(event, context):
     try:
-        logger.info('Received {} messages'.format(len(event['Records'])))
-        logger.info('messages {}'.format(event))
+        logger.info(f"Received {len(event['Records'])} messages")
+        logger.info(f'messages {event}')
         for record in event['Records']:
             event_body = json.loads(json.loads(record['body'])['Message'])['perms_to_set']
-            logger.info('Processing Permissions for: {}'.format(event_body))
+            logger.info(f'Processing Permissions for: {event_body}')
             principal_json, table_json, tableWithColumns_json, perm_json = buildjson(event_body)
-        logger.info('created permissions JSONs - principal json : {},table_json {},tableWithColumns_json {}, perm_json {} '
-          .format(principal_json, table_json, tableWithColumns_json, perm_json))
-        
+        logger.info(
+            f'created permissions JSONs - principal json : {principal_json},table_json {table_json},tableWithColumns_json {tableWithColumns_json}, perm_json {perm_json} '
+        )
+
+
         if event_body['AccessType'].lower() == 'grant':
-            logger.info('Calling Grant permissions for {} on resource {} or {} permissions {}'.format(principal_json, table_json, tableWithColumns_json, perm_json))
+            logger.info(
+                f'Calling Grant permissions for {principal_json} on resource {table_json} or {tableWithColumns_json} permissions {perm_json}'
+            )
+
             response = grant_lf_permissions(principal_json, table_json, tableWithColumns_json, perm_json)
         elif event_body['AccessType'].lower() == 'revoke':
-            logger.info('Calling Grant permissions for {} on resource {} or {} permissions {}'.format(principal_json, table_json, tableWithColumns_json, perm_json))
+            logger.info(
+                f'Calling Grant permissions for {principal_json} on resource {table_json} or {tableWithColumns_json} permissions {perm_json}'
+            )
+
             response = revoke_lf_permissions(principal_json, table_json, tableWithColumns_json, perm_json)
         else:
             raise LFAttributeError

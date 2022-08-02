@@ -51,7 +51,7 @@ def read_s3_content(bucket, key):
         s3_content = json.loads(obj.get()['Body'].read().decode('utf-8'))
         return s3_content
     except Exception as e:
-        logger.error('Exception while reading data from s3::/{}/{}'.format(bucket, key))
+        logger.error(f'Exception while reading data from s3::/{bucket}/{key}')
         raise e
 
 def generate_db_perm(perm_record):
@@ -75,27 +75,27 @@ def generate_db_perm(perm_record):
         }
     """
 
-    logger.info('Generating DB_Perm record for {}'.format(perm_record))
+    logger.info(f'Generating DB_Perm record for {perm_record}')
     arn_pattern = '^arn:(?P<Partition>[^:\n]*):(?P<Service>[^:\n]*):(?P<Region>[^:\n]*):(?P<AccountID>[^:\n]*):(?P<Ignore>(?P<ResourceType>[^:\/\n]*)[:\/])?(?P<Resource>.*)$'
     arn_regex = re.compile(arn_pattern)
-    regex_obj = arn_regex.match(perm_record['Principal'])
-    if regex_obj:
-        db_perm = {}
+    if regex_obj := arn_regex.match(perm_record['Principal']):
         table_json = {}
         table_wild_Card = {}
-        db_perm['AccountID'] = os.environ['ACCOUNT_ID'] 
-        db_perm['Principal'] = regex_obj.group(4)
-        if 'Table' in perm_record:
-            if 'DatabaseName' not in perm_record['Table']:
-                raise LFAttributeError
+        db_perm = {'AccountID': os.environ['ACCOUNT_ID'], 'Principal': regex_obj[4]}
+        if (
+            'Table' in perm_record
+            and 'DatabaseName' not in perm_record['Table']
+            or 'Table' not in perm_record
+            and 'TableWithColumns' not in perm_record
+        ):
+            raise LFAttributeError
+        elif 'Table' in perm_record:
             table_json['DatabaseName'] = perm_record['Table']['DatabaseName']
-        elif 'TableWithColumns' in perm_record:
-            if 'DatabaseName' not in perm_record['TableWithColumns']:
-                raise LFAttributeError
+        elif 'DatabaseName' in perm_record['TableWithColumns']:
             table_json['DatabaseName'] = perm_record['TableWithColumns']['DatabaseName']
         else:
             raise LFAttributeError
-        table_json['TableWildcard'] = table_wild_Card 
+        table_json['TableWildcard'] = table_wild_Card
         db_perm['Table'] = table_json
         db_perm['Permissions'] =  ["SELECT", "DESCRIBE"]
         db_perm['PermissionsWithGrantOption'] = ["SELECT", "DESCRIBE"]
@@ -114,26 +114,26 @@ def publish_sns(record):
         Returns:
             SNS Response {dict}
     """
-    
+
     sns_client = boto3.client('sns')
     response_to_sns = {
     "perms_to_set" : record
     }
-    logger.info('record  --->  {} '.format(record))
-    logger.info('sending event to sns --->  {} '.format(response_to_sns))
+    logger.info(f'record  --->  {record} ')
+    logger.info(f'sending event to sns --->  {response_to_sns} ')
     response = sns_client.publish(
-                TopicArn='arn:aws:sns:{}:{}:lakeformation-automation'.format(os.environ['REGION'],
-                                                                                    os.environ['ACCOUNT_ID']),
-                Message= json.dumps(response_to_sns),
-                MessageStructure='string',
-                MessageAttributes={
-                            'account_id': {
-                                'DataType': 'String',
-                                'StringValue': str(record['AccountID'])
-                            }
-                        }
+        TopicArn=f"arn:aws:sns:{os.environ['REGION']}:{os.environ['ACCOUNT_ID']}:lakeformation-automation",
+        Message=json.dumps(response_to_sns),
+        MessageStructure='string',
+        MessageAttributes={
+            'account_id': {
+                'DataType': 'String',
+                'StringValue': str(record['AccountID']),
+            }
+        },
     )
-    logger.info('response from sns --->  {} '.format(response))
+
+    logger.info(f'response from sns --->  {response} ')
     return response
     
     
@@ -145,24 +145,26 @@ def lambda_handler(event, context):
 
     arn_pattern = '^arn:(?P<Partition>[^:\n]*):(?P<Service>[^:\n]*):(?P<Region>[^:\n]*):(?P<AccountID>[^:\n]*):(?P<Ignore>(?P<ResourceType>[^:\/\n]*)[:\/])?(?P<Resource>.*)$'
     arn_regex = re.compile(arn_pattern)
-    
+
     try:
-        logger.info('Received {} messages'.format(len(event['Records'])))
-        logger.info('messages {}'.format(event))
+        logger.info(f"Received {len(event['Records'])} messages")
+        logger.info(f'messages {event}')
         for record in event['Records']:
             event_body = json.loads(record['body'])['Records'][0]
             message = parse_s3_event(event_body)
             s3_content = read_s3_content(message['bucket'], message['key'])
             for perm_record in s3_content['Records']:
                 regex_obj = arn_regex.match(perm_record['Principal'])
-                if perm_record['AccessType'] == 'grant':
-                    if regex_obj.group(4) != acc_id:
-                        response = publish_sns(generate_db_perm(perm_record))
-                        if response['ResponseMetadata']['HTTPStatusCode'] == 200:
-                            logger.info('DB Perm Record Published to sns {}'.format(s3_content))
-                            time.sleep(3)
+                if (
+                    perm_record['AccessType'] == 'grant'
+                    and regex_obj[4] != acc_id
+                ):
+                    response = publish_sns(generate_db_perm(perm_record))
+                    if response['ResponseMetadata']['HTTPStatusCode'] == 200:
+                        logger.info(f'DB Perm Record Published to sns {s3_content}')
+                        time.sleep(3)
                 response = publish_sns(perm_record)
-                logger.info('response of actual perm block -- {}'.format(response))
-            logger.info('Processing Permissions for perm json started --> {} '.format(s3_content))
+                logger.info(f'response of actual perm block -- {response}')
+            logger.info(f'Processing Permissions for perm json started --> {s3_content} ')
     except Exception as e:
         raise e
